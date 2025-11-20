@@ -16,11 +16,10 @@ st.set_page_config(
 st.markdown("""
     <style>
     .block-container {padding-top: 2rem; padding-bottom: 2rem;}
-    .stMetric {background-color: #f9f9f9; padding: 15px; border-radius: 10px; border: 1px solid #e6e6e6;}
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNCIONES DE LÓGICA (Optimizadas) ---
+# --- FUNCIONES DE LÓGICA ---
 
 @st.cache_data
 def cargar_datos(ruta_base="datos"):
@@ -71,7 +70,6 @@ def calcular_estadisticas(datos_completos):
         for elegido, _ in preferencias.items():
             elegido_clave = elegido.upper().strip()
             
-            # Si la clave existe (sea cargada o externa)
             if elegido_clave not in indegree:
                 indegree[elegido_clave] = 0
                 reverse_selections[elegido_clave] = []
@@ -95,7 +93,7 @@ with st.sidebar:
     st.title("🧩 Configuración")
     st.markdown("---")
     
-    # Filtro por Curso (Nuevo!)
+    # Filtro por Curso
     cursos_disponibles = sorted(list(set(d['curso'] for d in datos.values() if d['curso'])))
     filtro_curso = st.multiselect("Filtrar Alumnos por Curso:", cursos_disponibles, default=cursos_disponibles)
     
@@ -113,23 +111,11 @@ with st.sidebar:
 
 st.title("Análisis Sociométrico")
 st.markdown("Visión consolidada de las interacciones entre estudiantes.")
-
-# Métricas Superiores
-col_m1, col_m2, col_m3 = st.columns(3)
-total_alumnos = len(nombres_filtrados)
-promedio_selecciones = sum(indegree.values()) / len(indegree) if indegree else 0
-max_seleccionado = max(indegree.values()) if indegree else 0
-
-col_m1.metric("Total Alumnos (Visibles)", total_alumnos)
-col_m2.metric("Promedio de Elecciones", f"{promedio_selecciones:.1f}")
-col_m3.metric("Máximo de Elecciones", max_seleccionado)
-
 st.markdown("---")
 
 # PESTAÑAS PARA ORGANIZAR
 tab1, tab2 = st.tabs(["👤 Análisis Individual", "🏆 Ranking Global"])
 
-# --- TAB 1: INDIVIDUAL ---
 # --- TAB 1: INDIVIDUAL ---
 with tab1:
     if alumno_seleccionado:
@@ -149,34 +135,29 @@ with tab1:
             prefs_visible = [p for p in prefs_sorted if p[1] <= limite_preferencias]
             
             if prefs_visible:
-                # --- LÓGICA DE RECIPROCIDAD (NUEVO) ---
+                # --- LÓGICA DE RECIPROCIDAD ---
                 datos_tabla = []
                 for nombre_elegido, ranking_otorgado in prefs_visible:
                     clave_elegido = nombre_elegido.upper().strip()
                     
-                    # Variables para determinar si hubo match
                     es_match = False
                     ranking_reciproco = None
                     
-                    # Buscar los datos de la persona elegida
-                    # (Buscamos en todos los datos cargados quién coincide con la clave)
+                    # Buscar match
                     datos_compañero = None
                     for d in datos.values():
                         if d['clave_busqueda'] == clave_elegido:
                             datos_compañero = d
                             break
                     
-                    # Si encontramos al compañero, miramos dentro de sus preferencias
                     if datos_compañero:
                         sus_preferencias = datos_compañero['data'].get("Seleccion_Jerarquica", {})
-                        # Buscamos si el alumno actual está en esas preferencias
                         for k, v in sus_preferencias.items():
                             if k.upper().strip() == clave_alumno_actual:
                                 es_match = True
                                 ranking_reciproco = v
                                 break
                     
-                    # Formatear el texto para mostrar
                     if es_match:
                         nombre_mostrar = f"{nombre_elegido} ↔️ (Te eligió #{ranking_reciproco})"
                     else:
@@ -185,25 +166,22 @@ with tab1:
                     datos_tabla.append({
                         "Compañero": nombre_mostrar,
                         "Ranking": ranking_otorgado,
-                        "Match": es_match # Columna oculta para colorear
+                        "Match": es_match 
                     })
                 
-                # Crear DataFrame
                 df_prefs = pd.DataFrame(datos_tabla)
                 
-                # --- ESTILOS VISUALES (PANDAS STYLER) ---
+                # Estilos visuales
                 def colorear_matches(row):
-                    # Si es match, pintamos la fila de verde suave y letra oscura
                     if row["Match"]:
                         return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row)
                     else:
                         return [''] * len(row)
 
-                # Aplicar estilos y ocultar la columna "Match" (solo la usamos para pintar)
                 st.dataframe(
                     df_prefs.style.apply(colorear_matches, axis=1),
                     column_config={
-                        "Match": None # Ocultar columna auxiliar
+                        "Match": None 
                     },
                     use_container_width=True,
                     hide_index=True
@@ -219,11 +197,9 @@ with tab1:
             selectors = reverse_selections.get(clave_alumno_actual, [])
             
             if selectors:
-                # Ordenamos alfabéticamente
                 selectors = sorted(selectors)
                 df_sel = pd.DataFrame(selectors, columns=["Compañero"])
                 
-                # Mostramos tabla limpia
                 st.dataframe(
                     df_sel, 
                     use_container_width=True, 
@@ -236,15 +212,13 @@ with tab1:
     else:
         st.info("Selecciona un curso y un alumno en el menú lateral.")
 
-# --- TAB 2: GLOBAL (CORREGIDO Y MEJORADO) ---
+# --- TAB 2: GLOBAL (FIJO Y LIMPIO) ---
 with tab2:
-    st.subheader("Ranking de Popularidad (Indegree)")
+    st.subheader("Ranking de Popularidad")
     
-    # 1. Crear DataFrame Global con tipos de datos seguros
     data_global = []
     for nombre in nombres_filtrados:
         clave = datos[nombre]['clave_busqueda']
-        # Forzamos que sea entero (int) para evitar el TypeError
         total = int(indegree.get(clave, 0))
         curso = datos[nombre]['curso']
         data_global.append({
@@ -256,10 +230,8 @@ with tab2:
     df_global = pd.DataFrame(data_global)
     
     if not df_global.empty:
-        # Ordenar para el gráfico
-        df_global = df_global.sort_values(by="Veces Seleccionado", ascending=True) # Ascending para que Plotly lo ponga arriba
+        df_global = df_global.sort_values(by="Veces Seleccionado", ascending=True)
         
-        # 2. Gráfico de Barras con Plotly (Mucho más moderno que la tabla anterior)
         fig = px.bar(
             df_global, 
             x="Veces Seleccionado", 
@@ -268,7 +240,7 @@ with tab2:
             color="Veces Seleccionado",
             color_continuous_scale="Blues",
             text="Veces Seleccionado",
-            height=min(len(df_global) * 30 + 100, 800) # Altura dinámica
+            height=min(len(df_global) * 30 + 100, 800)
         )
         
         fig.update_layout(
@@ -278,9 +250,22 @@ with tab2:
             template="plotly_white"
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        # --- BLOQUEO DE INTERACCIÓN (Nuevo) ---
+        # Esto impide arrastrar los ejes (pan)
+        fig.update_xaxes(fixedrange=True)
+        fig.update_yaxes(fixedrange=True)
+
+        st.plotly_chart(
+            fig, 
+            use_container_width=True,
+            # Esto oculta la barra de herramientas y desactiva el zoom
+            config={
+                'displayModeBar': False,
+                'scrollZoom': False,
+                'displaylogo': False
+            }
+        )
         
-        # 3. Tabla de datos crudos (Opcional, abajo, por si quieren copiar)
         with st.expander("Ver tabla de datos completa"):
             st.dataframe(
                 df_global.sort_values(by="Veces Seleccionado", ascending=False),
