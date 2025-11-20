@@ -28,7 +28,7 @@ st.markdown("""
 
 # 1. LISTA DE USUARIOS PERMITIDOS (Total 5)
 USUARIOS_PERMITIDOS = [
-    "Eros",  # <--- Digamos que este será el JEFE
+    "EROS",  # <--- Digamos que este será el JEFE
     "Annia",
     "Diego",
     "Camila",
@@ -37,7 +37,7 @@ USUARIOS_PERMITIDOS = [
 
 # 2. DEFINIR QUIÉN ES EL ADMINISTRADOR
 # (Debe ser uno de los nombres de la lista de arriba, en MAYÚSCULAS)
-USUARIO_ADMIN = "Eros" 
+USUARIO_ADMIN = "EROS" 
 
 def registrar_ingreso(nombre_usuario):
     """Guarda el historial de quién entró."""
