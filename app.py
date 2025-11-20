@@ -23,18 +23,21 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-#      SISTEMA DE LOGIN (USUARIOS)
+#      SISTEMA DE LOGIN Y PERMISOS
 # ==========================================
 
-# 1. LISTA DE 5 USUARIOS PERMITIDOS
-# (Edita estos nombres. El sistema no distingue mayúsculas/minúsculas)
+# 1. LISTA DE USUARIOS PERMITIDOS (Total 5)
 USUARIOS_PERMITIDOS = [
-    "USUARIO1",
-    "USUARIO2",
-    "USUARIO3",
-    "USUARIO4",
-    "USUARIO5"
+    "Eros",  # <--- Digamos que este será el JEFE
+    "Annia",
+    "Diego",
+    "Camila",
+    "Mauricio"
 ]
+
+# 2. DEFINIR QUIÉN ES EL ADMINISTRADOR
+# (Debe ser uno de los nombres de la lista de arriba, en MAYÚSCULAS)
+USUARIO_ADMIN = "Eros" 
 
 def registrar_ingreso(nombre_usuario):
     """Guarda el historial de quién entró."""
@@ -43,7 +46,7 @@ def registrar_ingreso(nombre_usuario):
     
     nueva_linea = {
         "Fecha_Hora": [ahora],
-        "Usuario": [nombre_usuario] # Ahora guardamos Usuario, no RUT
+        "Usuario": [nombre_usuario]
     }
     df_nuevo = pd.DataFrame(nueva_linea)
     
@@ -53,7 +56,7 @@ def registrar_ingreso(nombre_usuario):
         df_nuevo.to_csv(archivo_log, mode='a', header=False, index=False)
 
 def normalizar_texto(texto):
-    """Quita espacios y convierte a mayúsculas para comparar fácil."""
+    """Quita espacios y convierte a mayúsculas."""
     if not texto: return ""
     return texto.strip().upper()
 
@@ -67,25 +70,18 @@ def pantalla_login():
         boton_entrar = st.button("Ingresar")
     
     if boton_entrar:
-        # Limpiamos el texto ingresado
         usuario_ingresado = normalizar_texto(user_input)
-        
-        # Limpiamos la lista autorizada también
         lista_limpia = [normalizar_texto(u) for u in USUARIOS_PERMITIDOS]
         
         if usuario_ingresado in lista_limpia:
             st.session_state['autenticado'] = True
-            st.session_state['usuario_actual'] = usuario_ingresado # Guardamos quién es
-            
-            # Guardamos el registro
+            st.session_state['usuario_actual'] = usuario_ingresado 
             registrar_ingreso(usuario_ingresado)
-            
             st.success(f"Bienvenido, {usuario_ingresado}. Cargando...")
             st.rerun() 
         else:
             st.error("⛔ Usuario no autorizado.")
 
-# Verificación de Estado
 if 'autenticado' not in st.session_state:
     st.session_state['autenticado'] = False
 
@@ -94,7 +90,7 @@ if not st.session_state['autenticado']:
     st.stop()
 
 # ==========================================
-#      FIN LOGIN - INICIO APP
+#      FIN LOGIN
 # ==========================================
 
 # --- FUNCIONES DE LÓGICA ---
@@ -128,14 +124,12 @@ def cargar_datos(ruta_base="datos"):
                         lista_nombres.append(nombre_display)
                 except Exception:
                     continue
-    
     return datos_completos, sorted(lista_nombres)
 
 @st.cache_data
 def calcular_estadisticas(datos_completos):
     indegree = {} 
     reverse_selections = {}
-    
     for nombre_display, info in datos_completos.items():
         clave = info['clave_busqueda']
         indegree[clave] = 0
@@ -145,14 +139,11 @@ def calcular_estadisticas(datos_completos):
         preferencias = info['data'].get("Seleccion_Jerarquica", {})
         for elegido, _ in preferencias.items():
             elegido_clave = elegido.upper().strip()
-            
             if elegido_clave not in indegree:
                 indegree[elegido_clave] = 0
                 reverse_selections[elegido_clave] = []
-            
             indegree[elegido_clave] += 1
             reverse_selections[elegido_clave].append(nombre_origen)
-                    
     return indegree, reverse_selections
 
 # --- CARGA DE DATOS ---
@@ -166,7 +157,6 @@ indegree, reverse_selections = calcular_estadisticas(datos)
 
 # --- SIDEBAR ---
 with st.sidebar:
-    # Muestra el nombre del usuario actual
     st.caption(f"Logueado como: {st.session_state.get('usuario_actual', 'Usuario')}")
     
     if st.button("Cerrar Sesión"):
@@ -178,7 +168,6 @@ with st.sidebar:
     
     cursos_disponibles = sorted(list(set(d['curso'] for d in datos.values() if d['curso'])))
     filtro_curso = st.multiselect("Filtrar Alumnos por Curso:", cursos_disponibles, default=cursos_disponibles)
-    
     nombres_filtrados = [n for n in lista_nombres if datos[n]['curso'] in filtro_curso or not filtro_curso]
     
     st.markdown("### Selección")
@@ -188,19 +177,23 @@ with st.sidebar:
     limite_preferencias = st.slider("Nivel de afinidad (Top N):", 1, 10, 3)
     st.caption("Define cuántas preferencias mostrar en las tablas.")
 
-    # ZONA ADMIN (Descargar Historial)
-    st.markdown("---")
-    with st.expander("👮 Zona Admin"):
-        if os.path.exists("historial_accesos.csv"):
-            with open("historial_accesos.csv", "rb") as f:
-                st.download_button(
-                    label="📥 Descargar Historial de Accesos",
-                    data=f,
-                    file_name="historial_accesos.csv",
-                    mime="text/csv"
-                )
-        else:
-            st.write("Aún no hay registros.")
+    # =======================================================
+    #  ZONA ADMIN (SOLO VISIBLE PARA EL USUARIO ELEGIDO)
+    # =======================================================
+    if st.session_state.get('usuario_actual') == USUARIO_ADMIN:
+        st.markdown("---")
+        with st.expander("👮 Zona Admin (Privado)"):
+            st.write("Solo tú puedes ver esto.")
+            if os.path.exists("historial_accesos.csv"):
+                with open("historial_accesos.csv", "rb") as f:
+                    st.download_button(
+                        label="📥 Descargar Historial",
+                        data=f,
+                        file_name="historial_accesos.csv",
+                        mime="text/csv"
+                    )
+            else:
+                st.info("Aún no hay registros de acceso.")
 
 # --- DASHBOARD PRINCIPAL ---
 
@@ -208,7 +201,6 @@ st.title("Análisis Sociométrico")
 st.markdown("Visión consolidada de las interacciones entre estudiantes.")
 st.markdown("---")
 
-# PESTAÑAS
 tab1, tab2 = st.tabs(["👤 Análisis Individual", "🏆 Ranking Global"])
 
 # --- TAB 1: INDIVIDUAL ---
@@ -216,11 +208,8 @@ with tab1:
     if alumno_seleccionado:
         info = datos[alumno_seleccionado]
         clave_alumno_actual = info['clave_busqueda']
-        
         st.subheader(f"Detalle: {alumno_seleccionado}")
-        
         c1, c2 = st.columns(2)
-        
         with c1:
             st.markdown("#### 👉 Sus Preferencias (A quién eligió)")
             prefs = info['data'].get("Seleccion_Jerarquica", {})
@@ -284,7 +273,7 @@ with tab1:
     else:
         st.info("Selecciona un curso y un alumno en el menú lateral.")
 
-# --- TAB 2: GLOBAL (FIJO) ---
+# --- TAB 2: GLOBAL ---
 with tab2:
     st.subheader("Ranking de Popularidad")
     
@@ -311,13 +300,7 @@ with tab2:
             height=min(len(df_global) * 30 + 100, 800)
         )
         
-        fig.update_layout(
-            xaxis_title="Cantidad de Elecciones",
-            yaxis_title="",
-            showlegend=False,
-            template="plotly_white"
-        )
-        
+        fig.update_layout(xaxis_title="Cantidad de Elecciones", yaxis_title="", showlegend=False, template="plotly_white")
         fig.update_xaxes(fixedrange=True)
         fig.update_yaxes(fixedrange=True)
 
