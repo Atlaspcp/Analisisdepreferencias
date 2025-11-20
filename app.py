@@ -4,7 +4,7 @@ import os
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
-import re  # <--- IMPORTANTE: Nueva librería para limpiar los paréntesis
+import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -52,7 +52,7 @@ def registrar_ingreso(nombre_usuario):
     else:
         df_nuevo.to_csv(archivo_log, mode='a', header=False, index=False)
 
-def normalizar_texto_login(texto):
+def normalizar_texto(texto):
     if not texto: return ""
     return texto.strip().upper()
 
@@ -66,8 +66,8 @@ def pantalla_login():
         boton_entrar = st.button("Ingresar")
     
     if boton_entrar:
-        usuario_ingresado = normalizar_texto_login(user_input)
-        lista_limpia = [normalizar_texto_login(u) for u in USUARIOS_PERMITIDOS]
+        usuario_ingresado = normalizar_texto(user_input)
+        lista_limpia = [normalizar_texto(u) for u in USUARIOS_PERMITIDOS]
         
         if usuario_ingresado in lista_limpia:
             st.session_state['autenticado'] = True
@@ -93,21 +93,18 @@ if not st.session_state['autenticado']:
 
 def limpiar_nombre_clave(texto):
     """
-    Esta función es el cerebro de la corrección.
     1. Corrige typos (MAKOUZI).
-    2. Elimina todo lo que esté entre paréntesis (8A, 8°B, etc).
+    2. Elimina todo lo que esté entre paréntesis.
     3. Elimina espacios extra y pone mayúsculas.
     """
     if not isinstance(texto, str): return str(texto)
     
-    # 1. Corrección de Typos específicos
+    # Corrección de Typos
     texto = texto.replace("MAKOUZI", "NAKOUZI")
     
-    # 2. Eliminar paréntesis y su contenido usando Regex
-    # Esto convierte "AGUSTIN CAMUS (8°A)" en "AGUSTIN CAMUS "
+    # Eliminar paréntesis
     texto = re.sub(r'\(.*?\)', '', texto)
     
-    # 3. Limpieza final
     return texto.strip().upper()
 
 @st.cache_data
@@ -130,22 +127,17 @@ def cargar_datos(ruta_base="datos"):
                         nombre_raw = data.get("Nombre", "Desconocido")
                         curso = data.get("Curso", "")
                         
-                        # Creamos el nombre bonito para mostrar
                         nombre_display = f"{nombre_raw.strip()} ({curso})" if curso else nombre_raw.strip()
-                        
-                        # Creamos la CLAVE PURA para buscar (Sin paréntesis, sin curso)
                         clave = limpiar_nombre_clave(nombre_raw)
                         
                         datos_completos[nombre_display] = {
                             "ruta": ruta_completa,
                             "data": data,
-                            "clave_busqueda": clave, # Esta es la clave maestra limpia
+                            "clave_busqueda": clave,
                             "nombre_original": nombre_raw,
                             "curso": curso
                         }
                         lista_nombres.append(nombre_display)
-                        
-                        # Guardamos referencia: CLAVE LIMPIA -> NOMBRE DISPLAY
                         mapeo_busqueda[clave] = nombre_display
                         
                 except Exception:
@@ -157,27 +149,21 @@ def calcular_estadisticas(datos_completos, mapeo_busqueda):
     indegree = {} 
     reverse_selections = {}
     
-    # 1. Inicializar
     for nombre_display, info in datos_completos.items():
         clave = info['clave_busqueda']
         indegree[clave] = 0
         reverse_selections[clave] = []
 
-    # 2. Procesar Votos
     for nombre_origen, info in datos_completos.items():
         preferencias = info['data'].get("Seleccion_Jerarquica", {})
         
         for elegido_raw, _ in preferencias.items():
-            # LIMPIEZA PROFUNDA del voto
-            # Aquí "AGUSTIN CAMUS (8°A)" se transforma en "AGUSTIN CAMUS"
             clave_voto = limpiar_nombre_clave(elegido_raw)
             
-            # Ahora sí van a coincidir
             if clave_voto in indegree:
                 indegree[clave_voto] += 1
                 reverse_selections[clave_voto].append(nombre_origen)
             else:
-                # Si no está en la base de datos, igual lo registramos
                 if clave_voto not in indegree:
                     indegree[clave_voto] = 0
                     reverse_selections[clave_voto] = []
@@ -218,7 +204,6 @@ with st.sidebar:
     limite_preferencias = st.slider("Nivel de afinidad (Top N):", 1, 10, 3)
     st.caption("Define cuántas preferencias mostrar en las tablas.")
 
-    # ZONA ADMIN
     if st.session_state.get('usuario_actual') == USUARIO_ADMIN:
         st.markdown("---")
         with st.expander("👮 Zona Admin (Privado)"):
@@ -234,7 +219,6 @@ with st.sidebar:
             else:
                 st.info("Aún no hay registros de acceso.")
 
-    # LOGO
     st.markdown("---")
     if os.path.exists("image_4.png"):
         st.image("image_4.png", use_container_width=True)
@@ -270,29 +254,25 @@ with tab1:
                 datos_tabla = []
                 for nombre_elegido_raw, ranking_otorgado in prefs_visible:
                     
-                    # Limpieza del nombre votado
                     clave_elegido = limpiar_nombre_clave(nombre_elegido_raw)
                     
                     es_match = False
                     ranking_reciproco = None
                     
-                    # Buscamos al compañero usando la clave limpia
                     datos_compañero = None
                     if clave_elegido in mapeo_busqueda:
                         nombre_display_comp = mapeo_busqueda[clave_elegido]
                         datos_compañero = datos[nombre_display_comp]
                     
-                    # Verificamos match
                     if datos_compañero:
                         sus_preferencias = datos_compañero['data'].get("Seleccion_Jerarquica", {})
                         for k, v in sus_preferencias.items():
-                            # Limpiamos también la lista del compañero
                             if limpiar_nombre_clave(k) == clave_alumno_actual:
                                 es_match = True
                                 ranking_reciproco = v
                                 break
                     
-                    nombre_clean_visual = nombre_elegido_raw.split("(")[0].strip() # Solo para mostrar bonito
+                    nombre_clean_visual = nombre_elegido_raw.split("(")[0].strip()
                     nombre_mostrar = f"{nombre_clean_visual} ↔️ (Te eligió #{ranking_reciproco})" if es_match else nombre_clean_visual
                     
                     datos_tabla.append({
@@ -329,7 +309,7 @@ with tab1:
     else:
         st.info("Selecciona un curso y un alumno en el menú lateral.")
 
-# --- TAB 2: GLOBAL ---
+# --- TAB 2: GLOBAL (TABLA MEJORADA) ---
 with tab2:
     st.subheader("Ranking de Popularidad")
     
@@ -343,26 +323,27 @@ with tab2:
     df_global = pd.DataFrame(data_global)
     
     if not df_global.empty:
-        df_global = df_global.sort_values(by="Veces Seleccionado", ascending=True)
+        # Ordenamos de mayor a menor
+        df_global = df_global.sort_values(by="Veces Seleccionado", ascending=False)
         
-        fig = px.bar(
-            df_global, 
-            x="Veces Seleccionado", 
-            y="Alumno", 
-            orientation='h',
-            color="Veces Seleccionado",
-            color_continuous_scale="Blues",
-            text="Veces Seleccionado",
-            height=min(len(df_global) * 30 + 100, 800)
+        # Mostramos la TABLA con BARRA DE PROGRESO interna
+        # Esto reemplaza el gráfico por algo mucho más limpio y legible
+        st.dataframe(
+            df_global,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Veces Seleccionado": st.column_config.ProgressColumn(
+                    "Votos Recibidos",
+                    help="Cantidad total de elecciones recibidas",
+                    format="%d",
+                    min_value=0,
+                    max_value=int(df_global["Veces Seleccionado"].max()),
+                ),
+                "Alumno": st.column_config.TextColumn("Estudiante", width="medium"),
+                "Curso": st.column_config.TextColumn("Curso", width="small")
+            },
+            height=600 # Altura suficiente para ver muchos datos con scroll
         )
-        
-        fig.update_layout(xaxis_title="Cantidad de Elecciones", yaxis_title="", showlegend=False, template="plotly_white")
-        fig.update_xaxes(fixedrange=True)
-        fig.update_yaxes(fixedrange=True)
-
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': False})
-        
-        with st.expander("Ver tabla de datos completa"):
-            st.dataframe(df_global.sort_values(by="Veces Seleccionado", ascending=False), use_container_width=True, hide_index=True)
     else:
         st.warning("No hay datos para mostrar con los filtros actuales.")
