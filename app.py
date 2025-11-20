@@ -3,6 +3,7 @@ import json
 import os
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -12,12 +13,89 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilos CSS personalizados para limpiar la interfaz
+# Estilos CSS
 st.markdown("""
     <style>
     .block-container {padding-top: 2rem; padding-bottom: 2rem;}
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
+
+# ==========================================
+#      SISTEMA DE LOGIN (USUARIOS)
+# ==========================================
+
+# 1. LISTA DE 5 USUARIOS PERMITIDOS
+# (Edita estos nombres. El sistema no distingue mayúsculas/minúsculas)
+USUARIOS_PERMITIDOS = [
+    "USUARIO1",
+    "USUARIO2",
+    "USUARIO3",
+    "USUARIO4",
+    "USUARIO5"
+]
+
+def registrar_ingreso(nombre_usuario):
+    """Guarda el historial de quién entró."""
+    archivo_log = "historial_accesos.csv"
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    nueva_linea = {
+        "Fecha_Hora": [ahora],
+        "Usuario": [nombre_usuario] # Ahora guardamos Usuario, no RUT
+    }
+    df_nuevo = pd.DataFrame(nueva_linea)
+    
+    if not os.path.exists(archivo_log):
+        df_nuevo.to_csv(archivo_log, index=False)
+    else:
+        df_nuevo.to_csv(archivo_log, mode='a', header=False, index=False)
+
+def normalizar_texto(texto):
+    """Quita espacios y convierte a mayúsculas para comparar fácil."""
+    if not texto: return ""
+    return texto.strip().upper()
+
+def pantalla_login():
+    st.markdown("## 🔒 Acceso Restringido")
+    st.markdown("Por favor, ingrese su **Nombre de Usuario** para acceder.")
+    
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        user_input = st.text_input("Usuario:")
+        boton_entrar = st.button("Ingresar")
+    
+    if boton_entrar:
+        # Limpiamos el texto ingresado
+        usuario_ingresado = normalizar_texto(user_input)
+        
+        # Limpiamos la lista autorizada también
+        lista_limpia = [normalizar_texto(u) for u in USUARIOS_PERMITIDOS]
+        
+        if usuario_ingresado in lista_limpia:
+            st.session_state['autenticado'] = True
+            st.session_state['usuario_actual'] = usuario_ingresado # Guardamos quién es
+            
+            # Guardamos el registro
+            registrar_ingreso(usuario_ingresado)
+            
+            st.success(f"Bienvenido, {usuario_ingresado}. Cargando...")
+            st.rerun() 
+        else:
+            st.error("⛔ Usuario no autorizado.")
+
+# Verificación de Estado
+if 'autenticado' not in st.session_state:
+    st.session_state['autenticado'] = False
+
+if not st.session_state['autenticado']:
+    pantalla_login()
+    st.stop()
+
+# ==========================================
+#      FIN LOGIN - INICIO APP
+# ==========================================
 
 # --- FUNCIONES DE LÓGICA ---
 
@@ -58,13 +136,11 @@ def calcular_estadisticas(datos_completos):
     indegree = {} 
     reverse_selections = {}
     
-    # Inicializar con ceros para todos los alumnos cargados
     for nombre_display, info in datos_completos.items():
         clave = info['clave_busqueda']
         indegree[clave] = 0
         reverse_selections[clave] = []
 
-    # Calcular votos
     for nombre_origen, info in datos_completos.items():
         preferencias = info['data'].get("Seleccion_Jerarquica", {})
         for elegido, _ in preferencias.items():
@@ -90,14 +166,19 @@ indegree, reverse_selections = calcular_estadisticas(datos)
 
 # --- SIDEBAR ---
 with st.sidebar:
+    # Muestra el nombre del usuario actual
+    st.caption(f"Logueado como: {st.session_state.get('usuario_actual', 'Usuario')}")
+    
+    if st.button("Cerrar Sesión"):
+        st.session_state['autenticado'] = False
+        st.rerun()
+        
     st.title("🧩 Configuración")
     st.markdown("---")
     
-    # Filtro por Curso
     cursos_disponibles = sorted(list(set(d['curso'] for d in datos.values() if d['curso'])))
     filtro_curso = st.multiselect("Filtrar Alumnos por Curso:", cursos_disponibles, default=cursos_disponibles)
     
-    # Filtrar lista de nombres basada en curso
     nombres_filtrados = [n for n in lista_nombres if datos[n]['curso'] in filtro_curso or not filtro_curso]
     
     st.markdown("### Selección")
@@ -107,13 +188,27 @@ with st.sidebar:
     limite_preferencias = st.slider("Nivel de afinidad (Top N):", 1, 10, 3)
     st.caption("Define cuántas preferencias mostrar en las tablas.")
 
+    # ZONA ADMIN (Descargar Historial)
+    st.markdown("---")
+    with st.expander("👮 Zona Admin"):
+        if os.path.exists("historial_accesos.csv"):
+            with open("historial_accesos.csv", "rb") as f:
+                st.download_button(
+                    label="📥 Descargar Historial de Accesos",
+                    data=f,
+                    file_name="historial_accesos.csv",
+                    mime="text/csv"
+                )
+        else:
+            st.write("Aún no hay registros.")
+
 # --- DASHBOARD PRINCIPAL ---
 
 st.title("Análisis Sociométrico")
 st.markdown("Visión consolidada de las interacciones entre estudiantes.")
 st.markdown("---")
 
-# PESTAÑAS PARA ORGANIZAR
+# PESTAÑAS
 tab1, tab2 = st.tabs(["👤 Análisis Individual", "🏆 Ranking Global"])
 
 # --- TAB 1: INDIVIDUAL ---
@@ -130,20 +225,15 @@ with tab1:
             st.markdown("#### 👉 Sus Preferencias (A quién eligió)")
             prefs = info['data'].get("Seleccion_Jerarquica", {})
             prefs_sorted = sorted(prefs.items(), key=lambda x: x[1])
-            
-            # Filtrar hasta el limite seleccionado
             prefs_visible = [p for p in prefs_sorted if p[1] <= limite_preferencias]
             
             if prefs_visible:
-                # --- LÓGICA DE RECIPROCIDAD ---
                 datos_tabla = []
                 for nombre_elegido, ranking_otorgado in prefs_visible:
                     clave_elegido = nombre_elegido.upper().strip()
-                    
                     es_match = False
                     ranking_reciproco = None
                     
-                    # Buscar match
                     datos_compañero = None
                     for d in datos.values():
                         if d['clave_busqueda'] == clave_elegido:
@@ -158,11 +248,8 @@ with tab1:
                                 ranking_reciproco = v
                                 break
                     
-                    if es_match:
-                        nombre_mostrar = f"{nombre_elegido} ↔️ (Te eligió #{ranking_reciproco})"
-                    else:
-                        nombre_mostrar = nombre_elegido
-                        
+                    nombre_mostrar = f"{nombre_elegido} ↔️ (Te eligió #{ranking_reciproco})" if es_match else nombre_elegido
+                    
                     datos_tabla.append({
                         "Compañero": nombre_mostrar,
                         "Ranking": ranking_otorgado,
@@ -171,48 +258,33 @@ with tab1:
                 
                 df_prefs = pd.DataFrame(datos_tabla)
                 
-                # Estilos visuales
                 def colorear_matches(row):
-                    if row["Match"]:
-                        return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row)
-                    else:
-                        return [''] * len(row)
+                    return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row) if row["Match"] else [''] * len(row)
 
                 st.dataframe(
                     df_prefs.style.apply(colorear_matches, axis=1),
-                    column_config={
-                        "Match": None 
-                    },
+                    column_config={"Match": None},
                     use_container_width=True,
                     hide_index=True
                 )
-                
                 st.caption("↔️ : Indica selección mutua (Match).")
-                
             else:
                 st.info(f"No tiene preferencias en el Top {limite_preferencias}.")
 
         with c2:
             st.markdown("#### 👈 Seleccionado por (Quién lo eligió)")
             selectors = reverse_selections.get(clave_alumno_actual, [])
-            
             if selectors:
                 selectors = sorted(selectors)
                 df_sel = pd.DataFrame(selectors, columns=["Compañero"])
-                
-                st.dataframe(
-                    df_sel, 
-                    use_container_width=True, 
-                    hide_index=True, 
-                    height=300
-                )
+                st.dataframe(df_sel, use_container_width=True, hide_index=True, height=300)
                 st.success(f"Ha sido elegido por **{len(selectors)}** compañeros en total.")
             else:
                 st.warning("Nadie ha seleccionado a este alumno todavía.")
     else:
         st.info("Selecciona un curso y un alumno en el menú lateral.")
 
-# --- TAB 2: GLOBAL (FIJO Y LIMPIO) ---
+# --- TAB 2: GLOBAL (FIJO) ---
 with tab2:
     st.subheader("Ranking de Popularidad")
     
@@ -221,11 +293,7 @@ with tab2:
         clave = datos[nombre]['clave_busqueda']
         total = int(indegree.get(clave, 0))
         curso = datos[nombre]['curso']
-        data_global.append({
-            "Alumno": nombre, 
-            "Veces Seleccionado": total,
-            "Curso": curso
-        })
+        data_global.append({"Alumno": nombre, "Veces Seleccionado": total, "Curso": curso})
     
     df_global = pd.DataFrame(data_global)
     
@@ -250,27 +318,12 @@ with tab2:
             template="plotly_white"
         )
         
-        # --- BLOQUEO DE INTERACCIÓN (Nuevo) ---
-        # Esto impide arrastrar los ejes (pan)
         fig.update_xaxes(fixedrange=True)
         fig.update_yaxes(fixedrange=True)
 
-        st.plotly_chart(
-            fig, 
-            use_container_width=True,
-            # Esto oculta la barra de herramientas y desactiva el zoom
-            config={
-                'displayModeBar': False,
-                'scrollZoom': False,
-                'displaylogo': False
-            }
-        )
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': False})
         
         with st.expander("Ver tabla de datos completa"):
-            st.dataframe(
-                df_global.sort_values(by="Veces Seleccionado", ascending=False),
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(df_global.sort_values(by="Veces Seleccionado", ascending=False), use_container_width=True, hide_index=True)
     else:
         st.warning("No hay datos para mostrar con los filtros actuales.")
