@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilos CSS personalizados para limpiar la interfaz
+# Estilos CSS
 st.markdown("""
     <style>
     .block-container {padding-top: 2rem; padding-bottom: 2rem;}
@@ -20,7 +20,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNCIONES DE LÓGICA (Optimizadas) ---
+# --- FUNCIONES DE LÓGICA ---
 
 @st.cache_data
 def cargar_datos(ruta_base="datos"):
@@ -59,19 +59,16 @@ def calcular_estadisticas(datos_completos):
     indegree = {} 
     reverse_selections = {}
     
-    # Inicializar con ceros para todos los alumnos cargados
     for nombre_display, info in datos_completos.items():
         clave = info['clave_busqueda']
         indegree[clave] = 0
         reverse_selections[clave] = []
 
-    # Calcular votos
     for nombre_origen, info in datos_completos.items():
         preferencias = info['data'].get("Seleccion_Jerarquica", {})
         for elegido, _ in preferencias.items():
             elegido_clave = elegido.upper().strip()
             
-            # Si la clave existe (sea cargada o externa)
             if elegido_clave not in indegree:
                 indegree[elegido_clave] = 0
                 reverse_selections[elegido_clave] = []
@@ -85,36 +82,52 @@ def calcular_estadisticas(datos_completos):
 datos, lista_nombres = cargar_datos("datos")
 
 if not datos:
-    st.error("⚠️ No se encontraron datos. Verifica la carpeta en GitHub.")
+    st.error("⚠️ No se encontraron datos.")
     st.stop()
 
 indegree, reverse_selections = calcular_estadisticas(datos)
+
+# --- LÓGICA DE NAVEGACIÓN (NUEVO) ---
+# Función para cambiar el alumno cuando se hace clic en una tabla
+def cambiar_alumno(nombre_nuevo):
+    # Verificar si el nombre existe en la lista actual (por si hay filtros)
+    if nombre_nuevo in lista_nombres:
+        st.session_state["alumno_seleccionado_key"] = nombre_nuevo
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("🧩 Configuración")
     st.markdown("---")
     
-    # Filtro por Curso (Nuevo!)
     cursos_disponibles = sorted(list(set(d['curso'] for d in datos.values() if d['curso'])))
     filtro_curso = st.multiselect("Filtrar Alumnos por Curso:", cursos_disponibles, default=cursos_disponibles)
     
-    # Filtrar lista de nombres basada en curso
     nombres_filtrados = [n for n in lista_nombres if datos[n]['curso'] in filtro_curso or not filtro_curso]
     
     st.markdown("### Selección")
-    alumno_seleccionado = st.selectbox("Buscar Alumno:", nombres_filtrados) if nombres_filtrados else None
+    
+    # IMPORTANTE: Agregamos 'key' para poder controlarlo desde el código
+    if "alumno_seleccionado_key" not in st.session_state:
+        st.session_state["alumno_seleccionado_key"] = nombres_filtrados[0] if nombres_filtrados else None
+
+    # Asegurarnos de que el valor en session state sea válido para la lista filtrada
+    if st.session_state["alumno_seleccionado_key"] not in nombres_filtrados and nombres_filtrados:
+         st.session_state["alumno_seleccionado_key"] = nombres_filtrados[0]
+
+    alumno_seleccionado = st.selectbox(
+        "Buscar Alumno:", 
+        nombres_filtrados,
+        key="alumno_seleccionado_key" # Conectado al estado
+    ) if nombres_filtrados else None
     
     st.markdown("---")
     limite_preferencias = st.slider("Nivel de afinidad (Top N):", 1, 10, 3)
-    st.caption("Define cuántas preferencias mostrar en las tablas.")
 
 # --- DASHBOARD PRINCIPAL ---
 
 st.title("Análisis Sociométrico")
-st.markdown("Visión consolidada de las interacciones entre estudiantes.")
 
-# Métricas Superiores
+# Métricas
 col_m1, col_m2, col_m3 = st.columns(3)
 total_alumnos = len(nombres_filtrados)
 promedio_selecciones = sum(indegree.values()) / len(indegree) if indegree else 0
@@ -126,10 +139,8 @@ col_m3.metric("Máximo de Elecciones", max_seleccionado)
 
 st.markdown("---")
 
-# PESTAÑAS PARA ORGANIZAR
 tab1, tab2 = st.tabs(["👤 Análisis Individual", "🏆 Ranking Global"])
 
-# --- TAB 1: INDIVIDUAL ---
 # --- TAB 1: INDIVIDUAL ---
 with tab1:
     if alumno_seleccionado:
@@ -140,125 +151,106 @@ with tab1:
         
         c1, c2 = st.columns(2)
         
+        # IZQUIERDA: A QUIÉN ELIGIÓ
         with c1:
             st.markdown("#### 👉 Sus Preferencias (A quién eligió)")
             prefs = info['data'].get("Seleccion_Jerarquica", {})
             prefs_sorted = sorted(prefs.items(), key=lambda x: x[1])
-            
-            # Filtrar hasta el limite seleccionado
             prefs_visible = [p for p in prefs_sorted if p[1] <= limite_preferencias]
             
             if prefs_visible:
-                # --- LÓGICA DE RECIPROCIDAD (NUEVO) ---
                 datos_tabla = []
                 for nombre_elegido, ranking_otorgado in prefs_visible:
                     clave_elegido = nombre_elegido.upper().strip()
-                    
-                    # Variables para determinar si hubo match
                     es_match = False
                     ranking_reciproco = None
                     
-                    # Buscar los datos de la persona elegida
-                    # (Buscamos en todos los datos cargados quién coincide con la clave)
                     datos_compañero = None
                     for d in datos.values():
                         if d['clave_busqueda'] == clave_elegido:
                             datos_compañero = d
                             break
                     
-                    # Si encontramos al compañero, miramos dentro de sus preferencias
                     if datos_compañero:
                         sus_preferencias = datos_compañero['data'].get("Seleccion_Jerarquica", {})
-                        # Buscamos si el alumno actual está en esas preferencias
                         for k, v in sus_preferencias.items():
                             if k.upper().strip() == clave_alumno_actual:
                                 es_match = True
                                 ranking_reciproco = v
                                 break
                     
-                    # Formatear el texto para mostrar
-                    if es_match:
-                        nombre_mostrar = f"{nombre_elegido} ↔️ (Te eligió #{ranking_reciproco})"
-                    else:
-                        nombre_mostrar = nombre_elegido
-                        
+                    nombre_mostrar = f"{nombre_elegido} ↔️ (Te eligió #{ranking_reciproco})" if es_match else nombre_elegido
+                    
                     datos_tabla.append({
                         "Compañero": nombre_mostrar,
                         "Ranking": ranking_otorgado,
-                        "Match": es_match # Columna oculta para colorear
+                        "Match": es_match,
+                        "NombreReal": nombre_elegido # Guardamos el nombre limpio para la navegación
                     })
                 
-                # Crear DataFrame
                 df_prefs = pd.DataFrame(datos_tabla)
                 
-                # --- ESTILOS VISUALES (PANDAS STYLER) ---
                 def colorear_matches(row):
-                    # Si es match, pintamos la fila de verde suave y letra oscura
-                    if row["Match"]:
-                        return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row)
-                    else:
-                        return [''] * len(row)
+                    return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row) if row["Match"] else [''] * len(row)
 
-                # Aplicar estilos y ocultar la columna "Match" (solo la usamos para pintar)
                 st.dataframe(
                     df_prefs.style.apply(colorear_matches, axis=1),
-                    column_config={
-                        "Match": None # Ocultar columna auxiliar
-                    },
+                    column_config={"Match": None, "NombreReal": None},
                     use_container_width=True,
                     hide_index=True
                 )
-                
-                st.caption("↔️ : Indica selección mutua (Match).")
-                
             else:
                 st.info(f"No tiene preferencias en el Top {limite_preferencias}.")
 
+        # DERECHA: QUIÉN LO ELIGIÓ (INTERACTIVO)
         with c2:
             st.markdown("#### 👈 Seleccionado por (Quién lo eligió)")
+            st.caption("💡 Haz clic en un nombre para ver su perfil")
             selectors = reverse_selections.get(clave_alumno_actual, [])
             
             if selectors:
-                # Ordenamos alfabéticamente
                 selectors = sorted(selectors)
                 df_sel = pd.DataFrame(selectors, columns=["Compañero"])
                 
-                # Mostramos tabla limpia
-                st.dataframe(
+                # CONFIGURACIÓN DE SELECCIÓN
+                evento_seleccion = st.dataframe(
                     df_sel, 
                     use_container_width=True, 
                     hide_index=True, 
-                    height=300
+                    height=300,
+                    on_select="rerun", # Recargar al seleccionar
+                    selection_mode="single-row"
                 )
+                
+                # LÓGICA DE CAMBIO DE PERFIL
+                if evento_seleccion.selection.rows:
+                    indice = evento_seleccion.selection.rows[0]
+                    nombre_clic = df_sel.iloc[indice]["Compañero"]
+                    cambiar_alumno(nombre_clic)
+                    st.rerun() # Forzar recarga inmediata
+                    
                 st.success(f"Ha sido elegido por **{len(selectors)}** compañeros en total.")
             else:
                 st.warning("Nadie ha seleccionado a este alumno todavía.")
-    else:
-        st.info("Selecciona un curso y un alumno en el menú lateral.")
-# --- TAB 2: GLOBAL (CORREGIDO Y MEJORADO) ---
+
+# --- TAB 2: GLOBAL (INTERACTIVO) ---
 with tab2:
     st.subheader("Ranking de Popularidad (Indegree)")
+    st.caption("💡 Haz clic en una fila de la tabla inferior para ir al perfil del alumno.")
     
-    # 1. Crear DataFrame Global con tipos de datos seguros
     data_global = []
     for nombre in nombres_filtrados:
         clave = datos[nombre]['clave_busqueda']
-        # Forzamos que sea entero (int) para evitar el TypeError
         total = int(indegree.get(clave, 0))
         curso = datos[nombre]['curso']
-        data_global.append({
-            "Alumno": nombre, 
-            "Veces Seleccionado": total,
-            "Curso": curso
-        })
+        data_global.append({"Alumno": nombre, "Veces Seleccionado": total, "Curso": curso})
     
     df_global = pd.DataFrame(data_global)
     
     if not df_global.empty:
-        # Ordenar para el gráfico
-        df_global = df_global.sort_values(by="Veces Seleccionado", ascending=True) # Ascending para que Plotly lo ponga arriba
+        df_global = df_global.sort_values(by="Veces Seleccionado", ascending=True)
         
-        # 2. Gráfico de Barras con Plotly (Mucho más moderno que la tabla anterior)
+        # Gráfico (Visual solamente)
         fig = px.bar(
             df_global, 
             x="Veces Seleccionado", 
@@ -267,24 +259,27 @@ with tab2:
             color="Veces Seleccionado",
             color_continuous_scale="Blues",
             text="Veces Seleccionado",
-            height=min(len(df_global) * 30 + 100, 800) # Altura dinámica
+            height=min(len(df_global) * 30 + 100, 800)
         )
-        
-        fig.update_layout(
-            xaxis_title="Cantidad de Elecciones",
-            yaxis_title="",
-            showlegend=False,
-            template="plotly_white"
-        )
-        
+        fig.update_layout(xaxis_title="", yaxis_title="", showlegend=False, template="plotly_white")
         st.plotly_chart(fig, use_container_width=True)
         
-        # 3. Tabla de datos crudos (Opcional, abajo, por si quieren copiar)
-        with st.expander("Ver tabla de datos completa"):
-            st.dataframe(
-                df_global.sort_values(by="Veces Seleccionado", ascending=False),
+        # Tabla Interactiva para Navegación
+        with st.expander("Ver tabla interactiva (Clic para navegar)", expanded=True):
+            df_tabla_global = df_global.sort_values(by="Veces Seleccionado", ascending=False)
+            
+            evento_global = st.dataframe(
+                df_tabla_global,
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
             )
+            
+            if evento_global.selection.rows:
+                indice = evento_global.selection.rows[0]
+                nombre_clic = df_tabla_global.iloc[indice]["Alumno"]
+                cambiar_alumno(nombre_clic)
+                st.rerun()
     else:
-        st.warning("No hay datos para mostrar con los filtros actuales.")
+        st.warning("No hay datos para mostrar.")
