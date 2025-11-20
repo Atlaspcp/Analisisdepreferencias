@@ -26,7 +26,6 @@ st.markdown("""
 #      SISTEMA DE LOGIN Y PERMISOS
 # ==========================================
 
-# 1. LISTA DE USUARIOS PERMITIDOS
 USUARIOS_PERMITIDOS = [
     "EROS",  
     "Annia",
@@ -35,7 +34,6 @@ USUARIOS_PERMITIDOS = [
     "Mauricio"
 ]
 
-# 2. DEFINIR QUIÉN ES EL ADMINISTRADOR
 USUARIO_ADMIN = "EROS"
 
 def registrar_ingreso(nombre_usuario):
@@ -97,16 +95,18 @@ if not st.session_state['autenticado']:
 def corregir_typos(texto):
     """Corrige errores de tipeo conocidos en los nombres."""
     if not isinstance(texto, str): return texto
-    texto_corregido = texto.replace("MAKOUZI", "NAKOUZI")
-    return texto_corregido
+    # Agregar aquí correcciones específicas si es necesario
+    texto = texto.replace("MAKOUZI", "NAKOUZI")
+    return texto.strip()
 
 @st.cache_data
 def cargar_datos(ruta_base="datos"):
     datos_completos = {}
     lista_nombres = []
+    mapeo_busqueda = {} # Diccionario auxiliar para búsqueda flexible
     
     if not os.path.exists(ruta_base):
-        return {}, []
+        return {}, [], {}
 
     for root, dirs, files in os.walk(ruta_base):
         for file in files:
@@ -121,53 +121,84 @@ def cargar_datos(ruta_base="datos"):
                         
                         curso = data.get("Curso", "")
                         nombre_display = f"{nombre} ({curso})" if curso else nombre
+                        
+                        # Clave única para el sistema
                         clave = nombre.upper().strip()
                         
                         datos_completos[nombre_display] = {
                             "ruta": ruta_completa,
                             "data": data,
                             "clave_busqueda": clave,
+                            "nombre_puro": nombre, # Guardamos el nombre sin curso
                             "curso": curso
                         }
                         lista_nombres.append(nombre_display)
+                        
+                        # Llenamos el mapeo de búsqueda (Nombre -> Clave)
+                        mapeo_busqueda[clave] = nombre_display
+                        
                 except Exception:
                     continue
-    return datos_completos, sorted(lista_nombres)
+    return datos_completos, sorted(lista_nombres), mapeo_busqueda
 
 @st.cache_data
-def calcular_estadisticas(datos_completos):
+def calcular_estadisticas(datos_completos, mapeo_busqueda):
     indegree = {} 
     reverse_selections = {}
     
+    # 1. Inicializar contadores para todos los alumnos cargados
     for nombre_display, info in datos_completos.items():
         clave = info['clave_busqueda']
         indegree[clave] = 0
         reverse_selections[clave] = []
 
+    # 2. Procesar Votos
     for nombre_origen, info in datos_completos.items():
         preferencias = info['data'].get("Seleccion_Jerarquica", {})
-        for elegido, _ in preferencias.items():
+        
+        for elegido_raw, _ in preferencias.items():
+            # Limpieza del nombre votado
+            elegido_limpio = corregir_typos(elegido_raw).upper().strip()
             
-            elegido_corregido = corregir_typos(elegido)
-            elegido_clave = elegido_corregido.upper().strip()
+            # INTENTO 1: Búsqueda directa
+            clave_final = None
             
-            if elegido_clave not in indegree:
-                indegree[elegido_clave] = 0
-                reverse_selections[elegido_clave] = []
+            if elegido_limpio in indegree:
+                clave_final = elegido_limpio
+            else:
+                # INTENTO 2: Búsqueda aproximada (fuzzy match simple)
+                # A veces votan "Juan Perez" pero el alumno es "Juan Perez Gonzalez"
+                # Buscamos si el nombre votado está contenido en alguna clave existente del MISMO CURSO (idealmente)
+                for clave_existente in indegree.keys():
+                    if elegido_limpio == clave_existente: 
+                        clave_final = clave_existente
+                        break
             
-            indegree[elegido_clave] += 1
-            reverse_selections[elegido_clave].append(nombre_origen)
+            # Si encontramos a quién iba dirigido el voto
+            if clave_final:
+                indegree[clave_final] += 1
+                reverse_selections[clave_final].append(nombre_origen)
+            else:
+                # Si no encontramos al alumno en la base de datos (voto fantasma),
+                # igual lo registramos para que no se pierda la info visual, 
+                # aunque no sume en el ranking global de alumnos presentes.
+                if elegido_limpio not in indegree:
+                    indegree[elegido_limpio] = 0
+                    reverse_selections[elegido_limpio] = []
+                
+                indegree[elegido_limpio] += 1
+                reverse_selections[elegido_limpio].append(nombre_origen)
                     
     return indegree, reverse_selections
 
 # --- CARGA DE DATOS ---
-datos, lista_nombres = cargar_datos("datos")
+datos, lista_nombres, mapeo_busqueda = cargar_datos("datos")
 
 if not datos:
     st.error("⚠️ No se encontraron datos. Verifica la carpeta en GitHub.")
     st.stop()
 
-indegree, reverse_selections = calcular_estadisticas(datos)
+indegree, reverse_selections = calcular_estadisticas(datos, mapeo_busqueda)
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -243,28 +274,37 @@ with tab1:
                 datos_tabla = []
                 for nombre_elegido_raw, ranking_otorgado in prefs_visible:
                     
-                    nombre_elegido = corregir_typos(nombre_elegido_raw)
-                    clave_elegido = nombre_elegido.upper().strip()
+                    # Limpieza básica
+                    nombre_elegido_clean = corregir_typos(nombre_elegido_raw)
+                    clave_elegido = nombre_elegido_clean.upper().strip()
                     
                     es_match = False
                     ranking_reciproco = None
                     
+                    # Búsqueda del compañero (Flexible)
                     datos_compañero = None
-                    for d in datos.values():
-                        if d['clave_busqueda'] == clave_elegido:
-                            datos_compañero = d
-                            break
                     
+                    # Intento 1: Búsqueda directa por clave
+                    if clave_elegido in mapeo_busqueda:
+                        nombre_display_comp = mapeo_busqueda[clave_elegido]
+                        datos_compañero = datos[nombre_display_comp]
+                    else:
+                        # Intento 2: Buscar si existe manualmente
+                        for d in datos.values():
+                            if d['clave_busqueda'] == clave_elegido:
+                                datos_compañero = d
+                                break
+
                     if datos_compañero:
                         sus_preferencias = datos_compañero['data'].get("Seleccion_Jerarquica", {})
                         for k, v in sus_preferencias.items():
-                            k_corregido = corregir_typos(k)
-                            if k_corregido.upper().strip() == clave_alumno_actual:
+                            k_clean = corregir_typos(k).upper().strip()
+                            if k_clean == clave_alumno_actual:
                                 es_match = True
                                 ranking_reciproco = v
                                 break
                     
-                    nombre_mostrar = f"{nombre_elegido} ↔️ (Te eligió #{ranking_reciproco})" if es_match else nombre_elegido
+                    nombre_mostrar = f"{nombre_elegido_clean} ↔️ (Te eligió #{ranking_reciproco})" if es_match else nombre_elegido_clean
                     
                     datos_tabla.append({
                         "Compañero": nombre_mostrar,
@@ -307,6 +347,8 @@ with tab2:
     data_global = []
     for nombre in nombres_filtrados:
         clave = datos[nombre]['clave_busqueda']
+        # Usamos la clave para buscar en el diccionario de indegree
+        # Si la clave no está (raro), devuelve 0
         total = int(indegree.get(clave, 0))
         curso = datos[nombre]['curso']
         data_global.append({"Alumno": nombre, "Veces Seleccionado": total, "Curso": curso})
